@@ -1,0 +1,57 @@
+= Ring Deque
+
+A simple data structure representing a double-ended queue with the twist that it is possible to view it as a
+single slice at any time without moving any data.
+
+This is done by mapping each page a second time in virtual memory so each byte of the memory of the slice is available
+at 2 different addresses.
+
+== Prior art
+There is a fully featured library on crates.io: https://crates.io/crates/slice-deque[slice-deque]
+Use that one!
+
+It still was a lot of fun to write though!
+
+== Usage
+
+[source,rust]
+----
+fn main() {
+    // always allocates full memory pages - typically 4kiB
+    let mut deque: RingDeque<u64> = RingDeque::allocate(100);
+
+    assert_eq!(deque.capacity(), 4096 / size_of::<u64>());
+
+    // fill the buffer
+    deque.push_back(5).unwrap();
+    deque.push_front(2).unwrap(); // VecDeque would wrap around with this
+    deque.push_front(1).unwrap();
+    for v in 8..12 {
+        deque.push_back(v).unwrap();
+    }
+
+    // remove elements
+    assert_eq!(deque.pop_back(), Some(11));
+    assert_eq!(deque.pop_front(), Some(1));
+
+    // at all times it is possible to have a single slice containing
+    // all values of the deque. Therefore it is contiguous.
+    assert_eq!(&deque[..], &[2, 5, 8, 9, 10]);
+}
+----
+
+== Limitations
+* No const constructor
+* Does NOT use the default allocator, but directly allocates memory using mmap
+* Cannot be resized (yet)
+* Supports Linux only right now.
+** In theory, Windows allows the same memory tricks
+** Probably macOS as well
+
+== TODOS
+
+* API documentation
+* Benchmarks
+* Try to prove that it works in all cases - e.g. using Kani
+* When this has features that slice-deque does not have, contribute there
+
