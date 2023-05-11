@@ -17,6 +17,34 @@ pub enum Error {
 }
 
 /// Always contiguous double-ended queue
+///
+/// ```
+/// # use std::mem::size_of;
+/// # use ring_deque::RingDeque;
+/// # fn main() {
+/// // always allocates full memory pages - typically 4kiB
+/// let mut deque: RingDeque<u64> = RingDeque::allocate(100);
+///
+/// assert_eq!(deque.capacity(), 4096 / size_of::<u64>());
+///
+/// // fill the buffer
+/// deque.push_back(5).unwrap();
+/// deque.push_front(2).unwrap(); // VecDeque would wrap around with this
+/// deque.push_front(1).unwrap();
+/// for v in 8..12 {
+///     deque.push_back(v).unwrap();
+/// }
+///
+/// // remove elements
+/// assert_eq!(deque.pop_back(), Some(11));
+/// assert_eq!(deque.pop_front(), Some(1));
+///
+/// // at all times it is possible to have a single slice containing
+/// // all values of the deque. Therefore it is contiguous.
+/// assert_eq!(&deque[..], &[2, 5, 8, 9, 10]);
+/// # }
+/// ```
+
 pub struct RingDeque<T: Sized> {
     base_addr: NonNull<T>,
     end_addr: NonNull<T>,
