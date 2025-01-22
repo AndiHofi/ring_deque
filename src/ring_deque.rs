@@ -40,7 +40,7 @@ pub enum Error {
 /// assert_eq!(deque.pop_front(), Some(1));
 ///
 /// // at all times it is possible to have a single slice containing
-/// // all values of the deque. Therefore it is contiguous.
+/// // all values of the deque. Therefore, it is contiguous.
 /// assert_eq!(&deque[..], &[2, 5, 8, 9, 10]);
 /// # }
 /// ```
@@ -120,6 +120,13 @@ where
         Ok(())
     }
 
+    pub fn push_back_rotate(&mut self, v: T) {
+        if self.len() == self.capacity() {
+            drop(self.pop_front().unwrap())
+        }
+        self.push_back(v).unwrap()
+    }
+
     pub fn pop_front(&mut self) -> Option<T> {
         if self.start == self.end {
             None
@@ -160,7 +167,7 @@ where
         }
 
         for v in slice {
-            self.push_back(*v).unwrap()
+            self.push_back(*v)?
         }
 
         Ok(())
@@ -176,10 +183,51 @@ where
 
         let mut slice_iter = slice.into_iter();
         while let Some(v) = slice_iter.next_back() {
-            self.push_front(*v).unwrap();
+            self.push_front(*v)?;
         }
 
         Ok(())
+    }
+
+    pub fn try_extend_back(&mut self, data: impl IntoIterator<Item = T>) -> Result<(), Error> {
+        for e in data.into_iter() {
+            self.push_back(e)?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.start == self.end
+    }
+
+    /// Reference to the first element
+    ///
+    /// ```
+    /// # use ring_deque::RingDeque;
+    /// # fn test() {
+    /// let mut deque = RingDeque::allocate(5);
+    /// deque.extend_front_from_slice(&[1,2,3]).unwrap();
+    ///
+    /// assert_eq!(deque.front(), Some(&1));
+    /// deque.pop_front();
+    /// assert_eq!(deque.front(), Some(&2));
+    /// # }
+    /// ```
+    pub fn front(&self) -> Option<&T> {
+        if self.is_empty() {
+            None
+        } else {
+            Some(unsafe { self.start.as_ref() })
+        }
+    }
+
+    pub fn back(&self) -> Option<&T> {
+        if self.is_empty() {
+            None
+        } else {
+            unsafe { self.end.as_ptr().offset(-1).as_ref() }
+        }
     }
 
     fn new_end(&self, addr: NonNull<T>) -> NonNull<T> {
@@ -307,7 +355,7 @@ struct RingAlloc<T> {
 }
 
 unsafe fn deallocate_ring_buffer<T>(alloc: RingAlloc<T>) {
-    let byte_ptr = alloc.base.cast::<c_void>();
+    let byte_ptr = NonNull::new(alloc.base.cast::<c_void>()).unwrap();
     let byte_capacity = alloc.capacity.get() * size_of::<T>();
     nix::sys::mman::munmap(byte_ptr.offset(byte_capacity as isize), byte_capacity).unwrap();
     nix::sys::mman::munmap(byte_ptr, byte_capacity).unwrap();
@@ -324,42 +372,40 @@ unsafe fn allocate_ring_buffer<T>(min_capacity: usize) -> RingAlloc<T> {
         let capacity = byte_count / size_of::<T>();
         let name = CString::new("mem").unwrap();
         let fd = memfd_create(&name, MemFdCreateFlag::MFD_CLOEXEC).unwrap();
-        ftruncate(fd, byte_count as off_t).unwrap();
+        ftruncate(&fd, byte_count as off_t).unwrap();
 
-        // find contiguous memory space
-        let base = nix::sys::mman::mmap(
+        // find contiguous virtual memory space
+        let base = nix::sys::mman::mmap_anonymous(
             None,
             NonZeroUsize::new(2 * byte_count).unwrap(),
             ProtFlags::PROT_NONE,
             MapFlags::MAP_ANONYMOUS | MapFlags::MAP_PRIVATE,
-            -1,
-            0,
         )
         .unwrap();
 
         let byte_count = NonZeroUsize::new(byte_count).unwrap();
         nix::sys::mman::mmap(
-            NonZeroUsize::new(base as usize),
+            Some(base.addr()),
             byte_count,
             ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
             MapFlags::MAP_FIXED | MapFlags::MAP_SHARED,
-            fd,
+            &fd,
             0,
         )
         .unwrap();
 
         nix::sys::mman::mmap(
-            NonZeroUsize::new(base as usize + byte_count.get()),
+            base.addr().checked_add(byte_count.get()),
             byte_count,
             ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
             MapFlags::MAP_FIXED | MapFlags::MAP_SHARED,
-            fd,
+            &fd,
             0,
         )
         .unwrap();
-        nix::libc::close(fd);
+        drop(fd);
         RingAlloc {
-            base: base.cast(),
+            base: base.as_ptr().cast(),
             capacity: NonZeroUsize::new(capacity).unwrap(),
             virt_capacity: NonZeroUsize::new(capacity * 2).unwrap(),
         }
